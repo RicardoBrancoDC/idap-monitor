@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "idap-monitor",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-29",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*",
+      "/healthz"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "idap-monitor-db",
+      "database_id": "410a7557-5a1d-442a-a0ac-7e9743622231"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

@@ -61,7 +61,58 @@ function badge(s){if(s==="conforme")return'<span class="badge ok">✓ Conforme</
 
 document.querySelectorAll(".tab").forEach(btn=>btn.onclick=()=>{document.querySelectorAll(".tab").forEach(b=>b.classList.remove("active"));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));btn.classList.add("active");document.getElementById("view-"+btn.dataset.view).classList.add("active");if(btn.dataset.view==="learning")loadLearning()});
 
-async function searchNow(){errorbox.classList.remove("show");loading.classList.add("show");queryinfo.textContent="";const p=new URLSearchParams({from:from.value,to:to.value,uf:uf.value,level:level.value,review:review.value,vigencia:vigencia.value,texto:texto.value,result:result.value});try{const res=await fetch("/api/alerts?"+p);const data=await res.json();if(!res.ok)throw new Error(data.error||"Falha na consulta.");rows=data.alerts;render();queryinfo.textContent=` ${rows.length} alerta(s) no período ${br(from.value)} a ${br(to.value)}`;const s=data.sync;syncinfo.textContent=`Índice: ${s.index_files} XML · período: ${s.matched_files} · novos: ${s.downloaded} · cache: ${s.cached}`;if(s.errors&&s.errors.length)syncinfo.textContent+=` · ${s.errors.length} erro(s)`}catch(e){errorbox.textContent=e.message;errorbox.classList.add("show");rows=[];render()}finally{loading.classList.remove("show")}}
+function fileDateMeta(name){
+ const m=name.match(/(\d{2})(\d{2})(\d{4})-([A-Z]{2})\.xml$/i);
+ if(!m)return null;
+ return {iso:`${m[3]}-${m[2]}-${m[1]}`,uf:m[4].toUpperCase()};
+}
+function splitChunks(arr,size){const out=[];for(let i=0;i<arr.length;i+=size)out.push(arr.slice(i,i+size));return out}
+async function syncSelectedPeriod(){
+ const idxRes=await fetch("/api/index");
+ if(!idxRes.ok)throw new Error("Não foi possível consultar o índice CAP.");
+ const idxHtml=await idxRes.text();
+ const doc=new DOMParser().parseFromString(idxHtml,"text/html");
+ const anchors=[...doc.querySelectorAll("a[href]")];
+ const xmlLinks=[];
+ const seen=new Set();
+ for(const a of anchors){
+   const href=a.getAttribute("href")||"";
+   const decoded=decodeURIComponent(href);
+   const name=decoded.split("/").filter(Boolean).pop()||"";
+   if(!name.toLowerCase().endsWith(".xml")||seen.has(name))continue;
+   seen.add(name);
+   const meta=fileDateMeta(name);
+   if(!meta)continue;
+   if(meta.iso<from.value||meta.iso>to.value)continue;
+   if(uf.value!=="all"&&meta.uf!==uf.value)continue;
+   xmlLinks.push({name,uf:meta.uf,date:meta.iso});
+ }
+ if(xmlLinks.length>500)throw new Error(`O período encontrou ${xmlLinks.length} XML. Reduza a consulta para no máximo 500 arquivos.`);
+ let downloaded=0,cached=0,errors=0;
+ for(const chunk of splitChunks(xmlLinks,5)){
+   const res=await fetch("/api/ingest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({files:chunk})});
+   const data=await res.json();
+   if(!res.ok)throw new Error(data.error||"Falha ao processar arquivos CAP.");
+   downloaded+=data.downloaded||0;cached+=data.cached||0;errors+=(data.errors||[]).length;
+ }
+ return {index_files:seen.size,matched_files:xmlLinks.length,downloaded,cached,errors};
+}
+async function searchNow(){
+ errorbox.classList.remove("show");loading.classList.add("show");queryinfo.textContent="";
+ try{
+   const s=await syncSelectedPeriod();
+   const p=new URLSearchParams({from:from.value,to:to.value,uf:uf.value,level:level.value,review:review.value,vigencia:vigencia.value,texto:texto.value,result:result.value});
+   const res=await fetch("/api/alerts?"+p);
+   const data=await res.json();
+   if(!res.ok)throw new Error(data.error||"Falha na consulta.");
+   rows=data.alerts;render();
+   queryinfo.textContent=` ${rows.length} alerta(s) no período ${br(from.value)} a ${br(to.value)}`;
+   syncinfo.textContent=`Índice: ${s.index_files} XML · período: ${s.matched_files} · novos: ${s.downloaded} · cache: ${s.cached}`;
+   if(s.errors)syncinfo.textContent+=` · ${s.errors} erro(s)`;
+ }catch(e){
+   errorbox.textContent=e.message;errorbox.classList.add("show");rows=[];render();
+ }finally{loading.classList.remove("show")}
+}
 function render(){tbody.innerHTML="";if(!rows.length)tbody.innerHTML='<tr><td colspan="10" class="empty">Nenhum alerta encontrado para os filtros informados.</td></tr>';rows.forEach((r,i)=>{const tr=document.createElement("tr");tr.innerHTML=`<td><strong>${esc(r.alert_id||"-")}</strong></td><td>${esc(r.sent_display||br(r.file_date))}</td><td>${esc(r.institution)}</td><td><strong>${esc(r.uf)}</strong></td><td><strong>${esc(r.level)}</strong></td><td>${badge(r.vigencia_final)}</td><td>${badge(r.texto_final)}</td><td>${human(r)}</td><td class="headline">${esc(r.headline)}</td><td><button class="smallbtn" onclick="openModal(${i})">${r.reviewed?"Ver revisão":"Revisar"}</button></td>`;tbody.appendChild(tr)});nTotal.textContent=rows.length;nPending.textContent=rows.filter(r=>!r.reviewed).length;nBad.textContent=rows.filter(r=>r.vigencia_final==="nao_conforme"||r.texto_final==="nao_conforme").length;nReviewed.textContent=rows.filter(r=>r.reviewed).length}
 function openModal(i){current=rows[i];choices={vig:null,txt:null};msub.textContent=`${current.sent_display} · ID ${current.alert_id||"-"} · ${current.institution} · ${current.area_desc||current.uf}`;mfile.textContent=current.file;murl.href=current.source_url;mheadline.textContent=current.headline||"(sem mensagem principal)";humanSummary.style.display=current.reviewed?"block":"none";if(current.reviewed){const av=current.algorithm_version_at_review||current.algorithm_version||"-";humanSummary.innerHTML=`<strong>Resultado validado por humano</strong><br>Vigência: ${badge(current.vigencia_final)} &nbsp; Texto: ${badge(current.texto_final)}<br><span style="color:#667085">Revisor: ${esc(current.reviewer||"Revisor local")} · Revisão: ${esc(current.reviewed_at||"-")} · Algoritmo revisado: ${esc(av)}</span>`}vbadge.innerHTML=badge(current.vigencia_auto);vlevel.textContent=current.level;vlimit.textContent=current.limit_display;vsent.textContent=current.sent_display;veffective.textContent=current.effective_display;vexpires.textContent=current.expires_display;vduration.textContent=current.duration_display;vnote.textContent=current.vigencia_note;tbadge.innerHTML=badge(current.texto_auto);tnote.textContent=current.texto_note+` Avaliação automática atual: ${current.algorithm_version||"-"}.`;document.querySelectorAll(".choice").forEach(b=>b.classList.remove("selected"));vcorr.classList.remove("show");tcorr.classList.remove("show");vreason.value="";treason.value="";reviewer.value=current.reviewer||"";if(current.reviewed){if(current.vig_choice){setChoice("vig",current.vig_choice);vcorrect.value=current.vig_correct_value||current.vigencia_final||"conforme";vreason.value=current.vig_reason||""}if(current.txt_choice){setChoice("txt",current.txt_choice);tcorrect.value=current.txt_correct_value||current.texto_final||"conforme";treason.value=current.txt_reason||""}}modalbg.classList.add("open")}
 function setChoice(scope,val){choices[scope]=val;document.querySelectorAll(`.choice[data-scope="${scope}"]`).forEach(b=>b.classList.toggle("selected",b.dataset.choice===val));(scope==="vig"?vcorr:tcorr).classList.toggle("show",val==="no")}
@@ -69,9 +120,38 @@ async function saveReview(){if(!choices.vig||!choices.txt){alert("Confirme ou co
 
 async function loadLearning(){learningError.classList.remove("show");try{const res=await fetch("/api/learning");const data=await res.json();if(!res.ok)throw new Error(data.error||"Falha ao carregar aprendizado.");learningData=data;renderLearning(data)}catch(e){learningError.textContent=e.message;learningError.classList.add("show")}}
 function renderLearning(data){const m=data.metrics;lReviewed.textContent=m.reviewed;lTextRate.textContent=m.text_agreement_rate+"%";lTextCorrections.textContent=m.text_corrections;lVersion.textContent=m.algorithm_version;lTextSub.textContent=`${m.text_agreements} confirmações · ${m.text_corrections} correções`;learnCount.textContent=m.text_corrections?`(${m.text_corrections})`:"";candidateList.innerHTML="";if(!data.candidates.length)candidateList.innerHTML='<div class="empty">Ainda não há sugestões. Elas aparecem quando um revisor corrige uma avaliação textual para Conforme.</div>';data.candidates.forEach((c,idx)=>{const div=document.createElement("div");div.className="candidate";div.innerHTML=`<div class="field"><label>Expressão sugerida</label><input id="candTerm${idx}" value="${esc(c.phrase)}"></div><div class="field"><label>Categoria</label><select id="candCat${idx}"><option value="action">Autoproteção concreta</option><option value="extreme">Ação para Extremo</option><option value="risk">Risco ou evento</option><option value="generic">Orientação genérica</option></select></div><button class="primary" onclick="approveCandidate(${idx})">Aprovar</button><div class="meta">${c.count} ocorrência(s). Exemplo: ${esc(c.examples[0]?.headline||"")}</div>`;candidateList.appendChild(div)});customTermList.innerHTML="";if(!data.custom_terms.length)customTermList.innerHTML='<div class="empty">Nenhuma expressão adicional aprovada.</div>';data.custom_terms.forEach(t=>{const div=document.createElement("div");div.className="termrow";div.innerHTML=`<div><span class="pill">${esc(t.term)}</span></div><div>${esc(catLabel(t.category))}</div><div style="font-size:11px;color:#667085">${t.active?"Ativa":"Desativada"}<br>${esc(t.approved_by||"")} ${esc(t.approved_at||"")}</div><div>${t.active?`<button class="primary danger" onclick="disableTerm(${t.id})">Desativar</button>`:'<span class="badge neutral">Inativa</span>'}</div>`;customTermList.appendChild(div)});divergenceBody.innerHTML="";if(!data.divergences.length)divergenceBody.innerHTML='<tr><td colspan="6" class="empty">Nenhuma divergência textual registrada.</td></tr>';data.divergences.forEach(d=>{const tr=document.createElement("tr");tr.innerHTML=`<td><strong>${esc(d.file)}</strong><br><span class="reason">${esc(d.headline)}</span></td><td>${esc(d.level)} · ${esc(d.uf)}</td><td>${badge(d.auto_result)}</td><td>${badge(d.human_result)}</td><td class="reason">${esc(d.reason||"Sem justificativa textual")}</td><td>${esc(d.algorithm_version)}</td>`;divergenceBody.appendChild(tr)})}
-async function approveTerm(term,category,reviewerName){if(!term.trim()){alert("Informe a expressão.");return}const res=await fetch("/api/learning/term",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"approve",term,category,reviewer:reviewerName})});const data=await res.json();if(!res.ok){alert(data.error||"Erro ao aprovar expressão.");return}alert(data.already_active?"A expressão já estava ativa.":`Expressão aprovada. ${data.processed||0} alertas em cache foram reprocessados. ${data.changed_result||0} mudaram de resultado automático.`);await loadLearning()}
+async function reprocessCachedAlerts(){
+ let cursor="";
+ let processed=0,changed=0;
+ while(true){
+   const res=await fetch("/api/reprocess",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cursor,limit:20})});
+   const data=await res.json();
+   if(!res.ok)throw new Error(data.error||"Falha ao reprocessar alertas.");
+   processed+=data.processed||0;changed+=data.changed||0;
+   if(!data.next_cursor)break;
+   cursor=data.next_cursor;
+ }
+ return {processed,changed};
+}
+async function approveTerm(term,category,reviewerName){
+ if(!term.trim()){alert("Informe a expressão.");return}
+ const res=await fetch("/api/learning/term",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"approve",term,category,reviewer:reviewerName})});
+ const data=await res.json();
+ if(!res.ok){alert(data.error||"Erro ao aprovar expressão.");return}
+ const r=await reprocessCachedAlerts();
+ alert(data.already_active?"A expressão já estava ativa.":`Expressão aprovada. ${r.processed} alertas foram reprocessados. ${r.changed} mudaram de resultado automático.`);
+ await loadLearning()
+}
 async function approveCandidate(idx){await approveTerm(document.getElementById("candTerm"+idx).value,document.getElementById("candCat"+idx).value,manualReviewer.value)}
-async function disableTerm(id){if(!confirm("Desativar esta expressão do avaliador automático?"))return;const res=await fetch("/api/learning/term",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"disable",id})});const data=await res.json();if(!res.ok){alert(data.error||"Erro ao desativar.");return}alert(`Expressão desativada. ${data.processed||0} alertas foram reprocessados.`);await loadLearning()}
+async function disableTerm(id){
+ if(!confirm("Desativar esta expressão do avaliador automático?"))return;
+ const res=await fetch("/api/learning/term",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"disable",id})});
+ const data=await res.json();
+ if(!res.ok){alert(data.error||"Erro ao desativar.");return}
+ const r=await reprocessCachedAlerts();
+ alert(`Expressão desativada. ${r.processed} alertas foram reprocessados.`);
+ await loadLearning()
+}
 
 search.onclick=searchNow;document.querySelectorAll(".quick").forEach(b=>b.onclick=()=>{const d=Number(b.dataset.days),t=new Date(),f=new Date(t);f.setDate(t.getDate()-d);from.value=iso(f);to.value=iso(t);searchNow()});document.querySelectorAll(".choice").forEach(b=>b.onclick=()=>setChoice(b.dataset.scope,b.dataset.choice));close.onclick=cancel.onclick=()=>modalbg.classList.remove("open");modalbg.onclick=e=>{if(e.target===modalbg)modalbg.classList.remove("open")};save.onclick=saveReview;refreshLearning.onclick=loadLearning;manualApprove.onclick=async()=>{await approveTerm(manualTerm.value,manualCategory.value,manualReviewer.value);manualTerm.value=""};
 </script>

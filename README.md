@@ -1,97 +1,57 @@
-# IDAP Monitor
+# IDAP Monitor V5 - Cloudflare Workers + D1
 
-Aplicação para monitoramento da conformidade de alertas publicados pela IDAP, com foco em **vigência** e **conteúdo textual**, revisão humana e aprendizado supervisionado.
+Esta versão foi preparada para a conta Cloudflare Free.
 
-## Funcionalidades
+## Banco D1 já configurado
 
-- consulta alertas reais no repositório CAP;
-- filtros por período, UF, nível, vigência, texto, revisão humana e resultado;
-- exibição do ID operacional do alerta no padrão `100008/2022`;
-- uso de `senderName` como nome da instituição;
-- avaliação automática de vigência e texto;
-- revisão humana com justificativa;
-- precedência permanente da avaliação validada pelo humano;
-- histórico de versões do avaliador;
-- área de Aprendizado para analisar divergências e aprovar novas expressões.
+- Nome: `idap-monitor-db`
+- Binding no Worker: `DB`
+- Database ID: `410a7557-5a1d-442a-a0ac-7e9743622231`
 
-## Rodar localmente
+O banco já foi criado no Dashboard e as cinco tabelas foram criadas.
 
-Requer Python 3.10 ou superior.
+## Arquitetura
 
-```bash
-python3 app.py
-```
+GitHub -> Cloudflare Workers Builds -> Worker + Static Assets -> D1
 
-Abra `http://127.0.0.1:8765/`.
+A interface continua sendo servida pelo próprio Worker. As rotas `/api/*` usam o banco D1.
 
-O banco `idap_monitor.db` será criado automaticamente e **não deve ser enviado ao GitHub**.
+Para reduzir o uso de CPU do plano Free, o índice grande de `idapcap.mdr.gov.br` é apenas repassado pelo Worker e filtrado no navegador. Os XML selecionados são enviados para processamento em pequenos lotes de 5 arquivos.
 
-## Proteção por senha
+## Publicação pelo GitHub
 
-A autenticação é opcional localmente. Para ativá-la:
+Substitua o conteúdo do repositório `RicardoBrancoDC/idap-monitor` pelos arquivos desta pasta e faça:
 
 ```bash
-export IDAP_BASIC_USER="seu_usuario"
-export IDAP_BASIC_PASSWORD="uma_senha_forte"
-python3 app.py
+git add -A
+git commit -m "Migra IDAP Monitor para Cloudflare Workers e D1"
+git push
 ```
 
-Em hospedagem pública, use essas variáveis obrigatoriamente.
+Depois, no Cloudflare:
 
-## Publicar no GitHub
+1. Workers & Pages
+2. Create application
+3. Import a repository
+4. Selecione `RicardoBrancoDC/idap-monitor`
+5. Production branch: `main`
+6. Build command: deixe em branco
+7. Deploy command: `npx wrangler deploy`
+8. Save and Deploy
 
-Crie um repositório vazio e, dentro desta pasta, execute:
+O arquivo `wrangler.jsonc` já contém o binding do D1, então não é necessário cadastrar manualmente o Database ID.
+
+## Desenvolvimento local
+
+Requer Node.js.
 
 ```bash
-git init
-git add .
-git commit -m "Versão inicial do IDAP Monitor"
-git branch -M main
-git remote add origin URL_DO_SEU_REPOSITORIO
-git push -u origin main
+npm install
+npm run dev
 ```
 
-O `.gitignore` já exclui banco, arquivos temporários e variáveis de ambiente.
+Por padrão, o Wrangler usa um banco D1 local durante desenvolvimento. Para testar diretamente contra o D1 remoto, use as opções remotas do Wrangler com cuidado.
 
-## Deploy no Render
+## Persistência
 
-O arquivo `render.yaml` deixa o projeto preparado para um Blueprint do Render. Ele configura:
-
-- serviço web Python;
-- endpoint de saúde `/healthz`;
-- armazenamento persistente em `/var/data` para o SQLite;
-- variáveis para usuário e senha;
-- deploy automático a partir do GitHub.
-
-No Render, informe valores para `IDAP_BASIC_USER` e `IDAP_BASIC_PASSWORD` quando solicitado.
-
-### Importante sobre SQLite
-
-Para esta fase, SQLite com disco persistente é suficiente para uma única instância. Se o projeto passar a receber muitos usuários simultâneos ou precisar escalar horizontalmente, a persistência deve migrar para PostgreSQL.
-
-## Estrutura
-
-```text
-idap-monitor/
-├── app.py
-├── index.html
-├── render.yaml
-├── requirements.txt
-├── .gitignore
-├── .env.example
-├── data/
-├── docs/
-│   ├── ARQUITETURA.md
-│   ├── REGRAS_AVALIACAO.md
-│   └── mapa_avaliacao_headline.png
-├── tests/
-│   └── test_parser.py
-└── .github/workflows/
-    └── validate.yml
-```
-
-## Segurança e dados
-
-Não envie `idap_monitor.db`, senhas ou arquivos `.env` para o GitHub. O banco contém as revisões e o histórico operacional da aplicação.
-
-Antes de disponibilizar a aplicação para uso institucional amplo, vale definir autenticação institucional, perfis de usuário, política de backup e migração para um banco centralizado.
+As revisões humanas, alertas processados, termos aprovados e histórico ficam no D1. Um novo deploy do Worker não apaga esses dados.
