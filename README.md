@@ -1,57 +1,50 @@
-# IDAP Monitor V5 - Cloudflare Workers + D1
+# IDAP Monitor V5.1
 
-Esta versão foi preparada para a conta Cloudflare Free.
-
-## Banco D1 já configurado
-
-- Nome: `idap-monitor-db`
-- Binding no Worker: `DB`
-- Database ID: `410a7557-5a1d-442a-a0ac-7e9743622231`
-
-O banco já foi criado no Dashboard e as cinco tabelas foram criadas.
+Esta versão separa a coleta CAP da aplicação web.
 
 ## Arquitetura
 
-GitHub -> Cloudflare Workers Builds -> Worker + Static Assets -> D1
+`idapcap.mdr.gov.br` → GitHub Actions → Cloudflare D1 → Cloudflare Worker → navegador
 
-A interface continua sendo servida pelo próprio Worker. As rotas `/api/*` usam o banco D1.
+A sincronização automática é executada pelo GitHub Actions a cada 15 minutos. A interface consulta apenas o D1, portanto não depende do acesso direto do Worker ao repositório CAP.
 
-Para reduzir o uso de CPU do plano Free, o índice grande de `idapcap.mdr.gov.br` é apenas repassado pelo Worker e filtrado no navegador. Os XML selecionados são enviados para processamento em pequenos lotes de 5 arquivos.
+## Cloudflare
 
-## Publicação pelo GitHub
+O `wrangler.jsonc` já aponta para:
 
-Substitua o conteúdo do repositório `RicardoBrancoDC/idap-monitor` pelos arquivos desta pasta e faça:
+- Worker: `idap-monitor`
+- D1 binding: `DB`
+- Banco: `idap-monitor-db`
+- Database ID: `410a7557-5a1d-442a-a0ac-7e9743622231`
 
-```bash
-git add -A
-git commit -m "Migra IDAP Monitor para Cloudflare Workers e D1"
-git push
-```
+## Secrets necessários no GitHub
 
-Depois, no Cloudflare:
+Em `Settings → Secrets and variables → Actions`, crie:
 
-1. Workers & Pages
-2. Create application
-3. Import a repository
-4. Selecione `RicardoBrancoDC/idap-monitor`
-5. Production branch: `main`
-6. Build command: deixe em branco
-7. Deploy command: `npx wrangler deploy`
-8. Save and Deploy
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
 
-O arquivo `wrangler.jsonc` já contém o binding do D1, então não é necessário cadastrar manualmente o Database ID.
+O token deve ser um Custom API Token do Cloudflare limitado à sua conta e com permissão `Account → D1 → Edit`.
 
-## Desenvolvimento local
+O Database ID já está configurado no workflow e não precisa ser criado como secret.
 
-Requer Node.js.
+## Primeira sincronização
 
-```bash
-npm install
-npm run dev
-```
+Depois de adicionar os secrets:
 
-Por padrão, o Wrangler usa um banco D1 local durante desenvolvimento. Para testar diretamente contra o D1 remoto, use as opções remotas do Wrangler com cuidado.
+1. GitHub → Actions
+2. Abra `Sincronizar CAP com D1`
+3. `Run workflow`
+4. Informe `7` dias para o primeiro teste
+5. Aguarde a conclusão
+6. Volte ao IDAP Monitor e consulte o período
 
-## Persistência
+A rotina agendada posterior verifica os últimos 3 dias a cada 15 minutos e só baixa XML novos ou processados por uma versão antiga do parser.
 
-As revisões humanas, alertas processados, termos aprovados e histórico ficam no D1. Um novo deploy do Worker não apaga esses dados.
+## Sincronização histórica
+
+Para carregar um período mais antigo, execute manualmente o workflow e aumente `lookback_days`, até 90 dias.
+
+## Deploy do Worker
+
+O deploy existente no Cloudflare continua usando o GitHub. Depois do `git push`, o Cloudflare fará um novo deploy automaticamente.

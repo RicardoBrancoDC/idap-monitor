@@ -19,7 +19,7 @@
 </style>
 </head>
 <body>
-<header class="topbar"><div class="brand"><div class="mark">ID</div><div><h1>IDAP Monitor</h1><p>Conformidade de vigência e conteúdo textual</p></div></div><div class="source">Fonte: idapcap.mdr.gov.br · V4</div></header>
+<header class="topbar"><div class="brand"><div class="mark">ID</div><div><h1>IDAP Monitor</h1><p>Conformidade de vigência e conteúdo textual</p></div></div><div class="source">CAP sincronizado via GitHub Actions · D1 · V5.1</div></header>
 <main class="wrap">
 <div class="tabs"><button class="tab active" data-view="monitor">Monitor</button><button class="tab" data-view="learning">Aprendizado <span class="count" id="learnCount"></span></button></div>
 
@@ -30,7 +30,7 @@
 <div class="field"><label>Data inicial</label><input type="date" id="from"></div><div class="field"><label>Data final</label><input type="date" id="to"></div>
 <div class="field"><label>UF</label><select id="uf"><option value="all">Todas</option></select></div><div class="field"><label>Nível</label><select id="level"><option value="all">Todos</option><option>Baixo</option><option>Moderado</option><option>Alto</option><option>Severo</option><option>Extremo</option></select></div>
 <div class="field"><label>Revisão humana</label><select id="review"><option value="all">Todos</option><option value="pending">Não revisados</option><option value="reviewed">Revisados</option></select></div><div class="field"><label>Vigência</label><select id="vigencia"><option value="all">Todos</option><option value="conforme">Conforme</option><option value="nao_conforme">Não conforme</option><option value="revisao">Revisão necessária</option></select></div><div class="field"><label>Texto</label><select id="texto"><option value="all">Todos</option><option value="conforme">Conforme</option><option value="nao_conforme">Não conforme</option><option value="revisao">Revisão necessária</option></select></div><div class="field"><label>Resultado</label><select id="result"><option value="all">Todos</option><option value="ok">Conformes</option><option value="nonconform">Com não conformidade</option><option value="review">Revisão necessária</option></select></div><button class="primary" id="search">Buscar</button>
-</div><div class="errorbox" id="errorbox"></div><div class="statusline"><div><span class="loading" id="loading">Consultando repositório...</span><span id="queryinfo"></span></div><div id="syncinfo">Ainda não consultado</div></div>
+</div><div class="errorbox" id="errorbox"></div><div class="statusline"><div><span class="loading" id="loading">Consultando banco...</span><span id="queryinfo"></span></div><div id="syncinfo">Aguardando consulta</div></div>
 </section>
 <section class="summary"><div class="card"><div class="label">Alertas encontrados</div><div class="value" id="nTotal">0</div></div><div class="card"><div class="label">Não revisados</div><div class="value" id="nPending">0</div></div><div class="card"><div class="label">Com não conformidade</div><div class="value" id="nBad">0</div></div><div class="card"><div class="label">Revisados por humano</div><div class="value" id="nReviewed">0</div></div></section>
 <section class="tablecard"><table><thead><tr><th>ID do alerta</th><th>Data/hora</th><th>Instituição</th><th>UF</th><th>Nível</th><th>Vigência</th><th>Texto</th><th>Revisão humana</th><th>Mensagem principal</th><th>Ação</th></tr></thead><tbody id="tbody"><tr><td colspan="10" class="empty">Escolha um período e clique em Buscar.</td></tr></tbody></table></section>
@@ -61,54 +61,33 @@ function badge(s){if(s==="conforme")return'<span class="badge ok">✓ Conforme</
 
 document.querySelectorAll(".tab").forEach(btn=>btn.onclick=()=>{document.querySelectorAll(".tab").forEach(b=>b.classList.remove("active"));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));btn.classList.add("active");document.getElementById("view-"+btn.dataset.view).classList.add("active");if(btn.dataset.view==="learning")loadLearning()});
 
-function fileDateMeta(name){
- const m=name.match(/(\d{2})(\d{2})(\d{4})-([A-Z]{2})\.xml$/i);
- if(!m)return null;
- return {iso:`${m[3]}-${m[2]}-${m[1]}`,uf:m[4].toUpperCase()};
-}
-function splitChunks(arr,size){const out=[];for(let i=0;i<arr.length;i+=size)out.push(arr.slice(i,i+size));return out}
-async function syncSelectedPeriod(){
- const idxRes=await fetch("/api/index");
- if(!idxRes.ok)throw new Error("Não foi possível consultar o índice CAP.");
- const idxHtml=await idxRes.text();
- const doc=new DOMParser().parseFromString(idxHtml,"text/html");
- const anchors=[...doc.querySelectorAll("a[href]")];
- const xmlLinks=[];
- const seen=new Set();
- for(const a of anchors){
-   const href=a.getAttribute("href")||"";
-   const decoded=decodeURIComponent(href);
-   const name=decoded.split("/").filter(Boolean).pop()||"";
-   if(!name.toLowerCase().endsWith(".xml")||seen.has(name))continue;
-   seen.add(name);
-   const meta=fileDateMeta(name);
-   if(!meta)continue;
-   if(meta.iso<from.value||meta.iso>to.value)continue;
-   if(uf.value!=="all"&&meta.uf!==uf.value)continue;
-   xmlLinks.push({name,uf:meta.uf,date:meta.iso});
- }
- if(xmlLinks.length>500)throw new Error(`O período encontrou ${xmlLinks.length} XML. Reduza a consulta para no máximo 500 arquivos.`);
- let downloaded=0,cached=0,errors=0;
- for(const chunk of splitChunks(xmlLinks,5)){
-   const res=await fetch("/api/ingest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({files:chunk})});
+async function loadSyncStatus(){
+ try{
+   const res=await fetch("/api/status");
    const data=await res.json();
-   if(!res.ok)throw new Error(data.error||"Falha ao processar arquivos CAP.");
-   downloaded+=data.downloaded||0;cached+=data.cached||0;errors+=(data.errors||[]).length;
+   if(!res.ok)throw new Error();
+   if(data.last_sync_at){
+     const when=new Date(data.last_sync_at);
+     const shown=Number.isNaN(when.getTime())?data.last_sync_at:when.toLocaleString("pt-BR");
+     syncinfo.textContent=`Última sincronização CAP: ${shown} · novos: ${data.last_sync_new||0} · verificados: ${data.last_sync_checked||0}`;
+     if(Number(data.last_sync_errors||0)>0)syncinfo.textContent+=` · erros: ${data.last_sync_errors}`;
+   }else{
+     syncinfo.textContent="A sincronização automática ainda não foi executada.";
+   }
+ }catch(e){
+   syncinfo.textContent="Não foi possível consultar o status da sincronização.";
  }
- return {index_files:seen.size,matched_files:xmlLinks.length,downloaded,cached,errors};
 }
 async function searchNow(){
  errorbox.classList.remove("show");loading.classList.add("show");queryinfo.textContent="";
  try{
-   const s=await syncSelectedPeriod();
    const p=new URLSearchParams({from:from.value,to:to.value,uf:uf.value,level:level.value,review:review.value,vigencia:vigencia.value,texto:texto.value,result:result.value});
    const res=await fetch("/api/alerts?"+p);
    const data=await res.json();
    if(!res.ok)throw new Error(data.error||"Falha na consulta.");
    rows=data.alerts;render();
    queryinfo.textContent=` ${rows.length} alerta(s) no período ${br(from.value)} a ${br(to.value)}`;
-   syncinfo.textContent=`Índice: ${s.index_files} XML · período: ${s.matched_files} · novos: ${s.downloaded} · cache: ${s.cached}`;
-   if(s.errors)syncinfo.textContent+=` · ${s.errors} erro(s)`;
+   await loadSyncStatus();
  }catch(e){
    errorbox.textContent=e.message;errorbox.classList.add("show");rows=[];render();
  }finally{loading.classList.remove("show")}
@@ -153,7 +132,7 @@ async function disableTerm(id){
  await loadLearning()
 }
 
-search.onclick=searchNow;document.querySelectorAll(".quick").forEach(b=>b.onclick=()=>{const d=Number(b.dataset.days),t=new Date(),f=new Date(t);f.setDate(t.getDate()-d);from.value=iso(f);to.value=iso(t);searchNow()});document.querySelectorAll(".choice").forEach(b=>b.onclick=()=>setChoice(b.dataset.scope,b.dataset.choice));close.onclick=cancel.onclick=()=>modalbg.classList.remove("open");modalbg.onclick=e=>{if(e.target===modalbg)modalbg.classList.remove("open")};save.onclick=saveReview;refreshLearning.onclick=loadLearning;manualApprove.onclick=async()=>{await approveTerm(manualTerm.value,manualCategory.value,manualReviewer.value);manualTerm.value=""};
+loadSyncStatus();search.onclick=searchNow;document.querySelectorAll(".quick").forEach(b=>b.onclick=()=>{const d=Number(b.dataset.days),t=new Date(),f=new Date(t);f.setDate(t.getDate()-d);from.value=iso(f);to.value=iso(t);searchNow()});document.querySelectorAll(".choice").forEach(b=>b.onclick=()=>setChoice(b.dataset.scope,b.dataset.choice));close.onclick=cancel.onclick=()=>modalbg.classList.remove("open");modalbg.onclick=e=>{if(e.target===modalbg)modalbg.classList.remove("open")};save.onclick=saveReview;refreshLearning.onclick=loadLearning;manualApprove.onclick=async()=>{await approveTerm(manualTerm.value,manualCategory.value,manualReviewer.value);manualTerm.value=""};
 </script>
 </body>
 </html>

@@ -1,14 +1,11 @@
 {
   "name": "idap-monitor",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
-  },
-  "dependencies": {
-    "fast-xml-parser": "^5.2.5"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
