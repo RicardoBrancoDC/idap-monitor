@@ -1,0 +1,39 @@
+name: Sincronizar CAP com D1
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "Quantos dias recentes verificar (1 a 90)"
+        required: false
+        default: "7"
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      D1_DATABASE_ID: 410a7557-5a1d-442a-a0ac-7e9743622231
+      LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '3' }}
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v6
+
+      - name: Configurar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: pip install -r scripts/requirements.txt
+
+      - name: Sincronizar alertas CAP
+        run: python scripts/sync_cap.py --lookback-days "$LOOKBACK_DAYS"
