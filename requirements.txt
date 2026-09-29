@@ -1,0 +1,2 @@
+# A V4 usa apenas a biblioteca padrão do Python.
+# Este arquivo existe para facilitar deploys que esperam requirements.txt.

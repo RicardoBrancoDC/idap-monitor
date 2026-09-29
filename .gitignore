@@ -1,0 +1,22 @@
+# Banco local e dados persistentes
+idap_monitor.db
+idap_monitor.db-*
+data/*
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Ambiente e segredos
+.env
+.env.*
+!.env.example
+
+# Sistema / editor
+.DS_Store
+.vscode/
+.idea/
