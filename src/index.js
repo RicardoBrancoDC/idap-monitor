@@ -67,7 +67,7 @@ async function alerts(env,url){
     r.reviewer,r.algorithm_version_at_review,r.reviewed_at,r.vig_validated_value,r.txt_validated_value
     FROM alerts a LEFT JOIN reviews r ON r.file=a.file WHERE a.file_date>=? AND a.file_date<=?`;
   const binds=[from,to];
-  if(q.get("uf")&&q.get("uf")!=="all"){sql+=" AND a.uf=?";binds.push(q.get("uf"))}
+  if(q.get("uf")&&q.get("uf")!=="all"){sql+=" AND instr(','||replace(coalesce(a.uf,''),' ','')||',', ','||?||',')>0";binds.push(String(q.get("uf")).toUpperCase())}
   if(q.get("level")&&q.get("level")!=="all"){sql+=" AND a.level=?";binds.push(q.get("level"))}
   sql+=" ORDER BY COALESCE(NULLIF(a.sent,''),a.file_date) DESC,a.file DESC";
   const rs=await env.DB.prepare(sql).bind(...binds).all();
